@@ -1,3 +1,8 @@
+"""
+Streamlit app for live stock price prediction using an LSTM model.
+Internship project – Educational purpose only.
+"""
+
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -7,104 +12,138 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
-# Load model
-model = load_model('Stock Predictions Model.keras')
 
-# App title
-st.title('📈 Stock Market Price Predictor with LSTM')
+# -------------------- App Config --------------------
+st.set_page_config(page_title="Stock Price Predictor", layout="centered")
+st.title("📈 Stock Market Price Predictor with LSTM")
 
-# User input
-stock = st.text_input('Enter Stock Symbol (e.g., GOOG)', 'GOOG')
 
-# Select date range
+# -------------------- Load Model Safely --------------------
+MODEL_PATH = "Stock Predictions Model.keras"
+
+try:
+    model = load_model(MODEL_PATH)
+except Exception as e:
+    st.error("❌ Model file not found or failed to load.")
+    st.stop()
+
+
+# -------------------- User Input --------------------
+stock = st.text_input("Enter Stock Symbol (e.g., GOOG, AAPL, TSLA)", "GOOG")
+
 start = st.date_input("Start Date", pd.to_datetime("2012-01-01"))
 end = st.date_input("End Date", pd.to_datetime("2022-12-31"))
 
-# Fetch data
-data = yf.download(stock, start, end)
+if start >= end:
+    st.error("❌ Start date must be earlier than end date.")
+    st.stop()
 
-st.subheader('Raw Stock Data')
+
+# -------------------- Fetch Stock Data --------------------
+@st.cache_data
+def load_stock_data(symbol, start_date, end_date):
+    return yf.download(symbol, start_date, end_date)
+
+
+data = load_stock_data(stock, start, end)
+
+if data.empty:
+    st.error("❌ No data found for the given stock symbol or date range.")
+    st.stop()
+
+
+st.subheader("📄 Raw Stock Data (Last 5 Rows)")
 st.write(data.tail())
 
-# Plot MA50
-st.subheader('Price vs MA50')
-ma_50_days = data.Close.rolling(50).mean()
-fig1 = plt.figure(figsize=(8, 6))
-plt.plot(ma_50_days, 'r', label='MA50')
-plt.plot(data.Close, 'g', label='Closing Price')
+
+# -------------------- Moving Averages --------------------
+st.subheader("📊 Price vs Moving Averages")
+
+ma_50 = data.Close.rolling(50).mean()
+ma_100 = data.Close.rolling(100).mean()
+ma_200 = data.Close.rolling(200).mean()
+
+fig1 = plt.figure(figsize=(10, 6))
+plt.plot(data.Close, label="Closing Price")
+plt.plot(ma_50, label="MA50")
+plt.plot(ma_100, label="MA100")
+plt.plot(ma_200, label="MA200")
 plt.legend()
 st.pyplot(fig1)
 
-# Plot MA50 vs MA100
-st.subheader('Price vs MA50 vs MA100')
-ma_100_days = data.Close.rolling(100).mean()
-fig2 = plt.figure(figsize=(8, 6))
-plt.plot(ma_50_days, 'r', label='MA50')
-plt.plot(ma_100_days, 'b', label='MA100')
-plt.plot(data.Close, 'g', label='Closing Price')
-plt.legend()
-st.pyplot(fig2)
 
-# Plot MA100 vs MA200
-st.subheader('Price vs MA100 vs MA200')
-ma_200_days = data.Close.rolling(200).mean()
-fig3 = plt.figure(figsize=(8, 6))
-plt.plot(ma_100_days, 'r', label='MA100')
-plt.plot(ma_200_days, 'b', label='MA200')
-plt.plot(data.Close, 'g', label='Closing Price')
-plt.legend()
-st.pyplot(fig3)
+# -------------------- Data Preparation --------------------
+data_close = data[["Close"]]
 
-# Prepare data
-data_train = pd.DataFrame(data.Close[0: int(len(data)*0.80)])
-data_test = pd.DataFrame(data.Close[int(len(data)*0.80):])
+train_size = int(len(data_close) * 0.80)
+data_train = data_close[:train_size]
+data_test = data_close[train_size:]
 
 scaler = MinMaxScaler(feature_range=(0, 1))
+data_train_scaled = scaler.fit_transform(data_train)
 
-past_100_days = data_train.tail(100)
-final_test_data = pd.concat([past_100_days, data_test], ignore_index=True)
-input_data = scaler.fit_transform(final_test_data)
+past_100_days = data_train_scaled[-100:]
+test_data_scaled = scaler.transform(data_test)
 
-# Create sequences
+final_data = np.concatenate((past_100_days, test_data_scaled))
+
+
+# -------------------- Create Sequences --------------------
 x_test = []
 y_test = []
-for i in range(100, input_data.shape[0]):
-    x_test.append(input_data[i-100:i])
-    y_test.append(input_data[i, 0])
 
-x_test, y_test = np.array(x_test), np.array(y_test)
+for i in range(100, final_data.shape[0]):
+    x_test.append(final_data[i - 100:i])
+    y_test.append(final_data[i, 0])
 
-# Predictions
+x_test = np.array(x_test)
+y_test = np.array(y_test)
+
+
+# -------------------- Prediction --------------------
 predicted_prices = model.predict(x_test)
+
+# Inverse scaling
 scale_factor = 1 / scaler.scale_[0]
 predicted_prices = predicted_prices * scale_factor
 y_test = y_test * scale_factor
 
-# Plot prediction
-st.subheader('📊 Predicted Price vs Original Price')
-fig4 = plt.figure(figsize=(10, 6))
-plt.plot(predicted_prices, 'r', label='Predicted Price')
-plt.plot(y_test, 'g', label='Original Price')
-plt.xlabel('Time')
-plt.ylabel('Price')
-plt.legend()
-st.pyplot(fig4)
 
-# Metrics
+# -------------------- Plot Predictions --------------------
+st.subheader("📈 Predicted Price vs Actual Price")
+
+fig2 = plt.figure(figsize=(10, 6))
+plt.plot(y_test, label="Actual Price")
+plt.plot(predicted_prices, label="Predicted Price")
+plt.xlabel("Time")
+plt.ylabel("Stock Price")
+plt.legend()
+st.pyplot(fig2)
+
+
+# -------------------- Model Performance --------------------
 rmse = np.sqrt(mean_squared_error(y_test, predicted_prices))
 mae = mean_absolute_error(y_test, predicted_prices)
-st.subheader("📈 Model Performance")
+
+st.subheader("📉 Model Performance")
 st.write(f"**RMSE:** {rmse:.2f}")
 st.write(f"**MAE:** {mae:.2f}")
 
-# Learning outcome section
+
+# -------------------- Learning Outcomes --------------------
 st.markdown("""
 ---
-### ✅ What I Learned from this Internship
-- Time Series Forecasting using LSTM
-- Data scaling and sequence preparation
-- Visualization with Matplotlib & Streamlit
-- Stock market trends via moving averages
-- Deploying ML models in an interactive web app
+### ✅ Internship Learning Outcomes
+- Time series forecasting using LSTM
+- Live data fetching with Yahoo Finance
+- Data scaling and sequence generation
+- Stock trend analysis using moving averages
+- Model evaluation using RMSE and MAE
+- Deploying ML models using Streamlit
 """)
 
+
+# -------------------- Disclaimer --------------------
+st.warning(
+    "⚠️ This project is for educational purposes only and should not be used for real-world trading decisions."
+)
