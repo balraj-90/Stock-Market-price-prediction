@@ -107,3 +107,4 @@ st.markdown("""
 - Stock market trends via moving averages
 - Deploying ML models in an interactive web app
 """)
+
